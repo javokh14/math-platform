@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
-// Turso manzili HTTPS qilib to'g'rilandi
 const TURSO_URL = "https://backend-mathem-javokh14.aws-ap-northeast-1.turso.io";
 const TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTE2OTY0MTgsImlkIjoiMDFhMTI5NmQtM2IwMS03NDU2LTljZDktNDc5MjExMjkzOTEzIiwia2lkIjoiZElaN0NzZExlZXZIZkJwU29vWW9nVGNrd3NMczRXSG1LT0x0aTMzT0tPayIsInJpZCI6IjM1OWFjYTRjLTYzNzgtNGU0Yy1hZDNmLTYxYWM2OGM4ZTI1ZCJ9.Ts1pks55CC58WcAvqc-x3VWOXDjzeXsPoFBRUdxo-IFC33S-e1wj9NIgAaFYyp9hIAoioWJ_ghl0Jfo0w2dWCA";
 
@@ -17,56 +16,65 @@ const turso = createClient({
   authToken: TURSO_TOKEN
 });
 
-// Jadvallarni avtomatik tekshirish va yaratish
-async function initDB() {
-  try {
-    await turso.execute(`
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      );
-    `);
+// Создание всех таблиц
+async function createTables() {
+  await turso.execute(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
 
-    await turso.execute(`
-      CREATE TABLE IF NOT EXISTS students (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        surname TEXT,
-        age INTEGER,
-        photo TEXT,
-        balance INTEGER DEFAULT 0,
-        solved_count INTEGER DEFAULT 0,
-        certificate TEXT
-      );
-    `);
+  await turso.execute(`
+    CREATE TABLE IF NOT EXISTS students (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      surname TEXT,
+      age INTEGER,
+      photo TEXT,
+      balance INTEGER DEFAULT 0,
+      solved_count INTEGER DEFAULT 0,
+      certificate TEXT
+    );
+  `);
 
-    await turso.execute(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        student_id TEXT,
-        category TEXT,
-        question TEXT,
-        answer TEXT,
-        created_at INTEGER
-      );
-    `);
+  await turso.execute(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      student_id TEXT,
+      category TEXT,
+      question TEXT,
+      answer TEXT,
+      created_at INTEGER
+    );
+  `);
 
-    await turso.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('isMaintenance', '0');`);
-    await turso.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardPerTask', '100');`);
-
-    console.log("Turso Cloud bazasi muvaffaqiyatli ulandi va tayyor!");
-  } catch (err) {
-    console.error("Turso xatosi:", err);
-  }
+  await turso.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('isMaintenance', '0');`);
+  await turso.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardPerTask', '100');`);
 }
-initDB();
 
-// Server ishlab turganini tekshirish uchun asosiy sahifa
-app.get('/', (req, res) => {
-  res.json({ status: "ok", message: "MathPlatform API Render serverida muvaffaqiyatli ishlamoqda!" });
+// Запуск при старте
+createTables().then(() => {
+  console.log("Turso jadvallari muvaffaqiyatli tekshirildi va yaratildi!");
+}).catch(err => {
+  console.error("Jadval yaratishda xato:", err);
 });
 
-// 1. Sozlamalarni olish
+// Маршрут для ручной инициализации таблиц через браузер
+app.get('/setup', async (req, res) => {
+  try {
+    await createTables();
+    res.send("<h1>Barcha jadvallar muvaffaqiyatli yaratildi! Endi saytdan foydalanishingiz mumkin.</h1>");
+  } catch (e) {
+    res.status(500).send("Xatolik: " + e.message);
+  }
+});
+
+app.get('/', (req, res) => {
+  res.json({ status: "ok", message: "API server ishlamoqda!" });
+});
+
+// 1. Настройки
 app.get('/api/settings', async (req, res) => {
   try {
     const rs = await turso.execute("SELECT * FROM settings;");
@@ -81,7 +89,7 @@ app.get('/api/settings', async (req, res) => {
   }
 });
 
-// 2. Sozlamalarni yangilash (Admin)
+// 2. Обновление настроек
 app.post('/api/settings', async (req, res) => {
   try {
     const { isMaintenance, rewardPerTask } = req.body;
@@ -103,7 +111,7 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
-// 3. O'quvchilar ro'yxati
+// 3. Список учеников
 app.get('/api/students', async (req, res) => {
   try {
     const rs = await turso.execute("SELECT * FROM students ORDER BY name ASC;");
@@ -113,14 +121,14 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// 4. Yangi o'quvchi qo'shish
+// 4. Добавление ученика
 app.post('/api/students', async (req, res) => {
   try {
     const { name, surname, age, photo } = req.body;
     const id = 'st_' + Date.now();
     await turso.execute({
       sql: "INSERT INTO students (id, name, surname, age, photo, balance, solved_count) VALUES (?, ?, ?, ?, ?, 0, 0);",
-      args: [id, name, surname, age, photo]
+      args: [id, name, surname, age, photo || "badge"]
     });
     res.json({ success: true, id });
   } catch (e) {
@@ -128,7 +136,7 @@ app.post('/api/students', async (req, res) => {
   }
 });
 
-// 5. O'quvchi profili va navbatdagi 1 ta misolini olish
+// 5. Профиль ученика и текущая задача
 app.get('/api/student/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -152,7 +160,7 @@ app.get('/api/student/:id', async (req, res) => {
   }
 });
 
-// 6. Misol qo'shish
+// 6. Добавление задачи
 app.post('/api/tasks', async (req, res) => {
   try {
     const { studentId, category, question, answer } = req.body;
@@ -167,7 +175,7 @@ app.post('/api/tasks', async (req, res) => {
   }
 });
 
-// 7. Misol javobini tekshirish
+// 7. Проверка ответа
 app.post('/api/tasks/solve', async (req, res) => {
   try {
     const { studentId, taskId, answer } = req.body;
@@ -205,7 +213,7 @@ app.post('/api/tasks/solve', async (req, res) => {
   }
 });
 
-// 8. Balansni o'zgartirish (Qo'shish / Ayirish)
+// 8. Баланс
 app.post('/api/students/balance', async (req, res) => {
   try {
     const { studentId, amount, action } = req.body;
@@ -222,7 +230,7 @@ app.post('/api/students/balance', async (req, res) => {
   }
 });
 
-// 9. Sertifikat biriktirish
+// 9. Сертификат
 app.post('/api/students/certificate', async (req, res) => {
   try {
     const { studentId, certificateData } = req.body;
