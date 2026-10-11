@@ -1,17 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@libsql/client');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// TURSO MA'LUMOTLARI TO'G'RIDAN-TO'G'RI KOD ICHIDA
-const TURSO_URL = "libsql://backend-mathem-javokh14.aws-ap-northeast-1.turso.io";
+// Turso manzili HTTPS qilib to'g'rilandi
+const TURSO_URL = "https://backend-mathem-javokh14.aws-ap-northeast-1.turso.io";
 const TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTE2OTY0MTgsImlkIjoiMDFhMTI5NmQtM2IwMS03NDU2LTljZDktNDc5MjExMjkzOTEzIiwia2lkIjoiZElaN0NzZExlZXZIZkJwU29vWW9nVGNrd3NMczRXSG1LT0x0aTMzT0tPayIsInJpZCI6IjM1OWFjYTRjLTYzNzgtNGU0Yy1hZDNmLTYxYWM2OGM4ZTI1ZCJ9.Ts1pks55CC58WcAvqc-x3VWOXDjzeXsPoFBRUdxo-IFC33S-e1wj9NIgAaFYyp9hIAoioWJ_ghl0Jfo0w2dWCA";
 
 const turso = createClient({
@@ -63,7 +61,10 @@ async function initDB() {
 }
 initDB();
 
-// --- API LAR ---
+// Server ishlab turganini tekshirish uchun asosiy sahifa
+app.get('/', (req, res) => {
+  res.json({ status: "ok", message: "MathPlatform API Render serverida muvaffaqiyatli ishlamoqda!" });
+});
 
 // 1. Sozlamalarni olish
 app.get('/api/settings', async (req, res) => {
@@ -112,7 +113,7 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// 4. O'quvchi qo'shish
+// 4. Yangi o'quvchi qo'shish
 app.post('/api/students', async (req, res) => {
   try {
     const { name, surname, age, photo } = req.body;
@@ -188,13 +189,11 @@ app.post('/api/tasks/solve', async (req, res) => {
     const settingRs = await turso.execute("SELECT value FROM settings WHERE key = 'rewardPerTask';");
     const reward = parseInt(settingRs.rows[0]?.value || '100', 10);
 
-    // Misolni navbatdan o'chirish
     await turso.execute({
       sql: "DELETE FROM tasks WHERE id = ?;",
       args: [taskId]
     });
 
-    // Balans va yechilgan misollar hisobini oshirish
     await turso.execute({
       sql: "UPDATE students SET balance = balance + ?, solved_count = solved_count + 1 WHERE id = ?;",
       args: [reward, studentId]
@@ -206,7 +205,7 @@ app.post('/api/tasks/solve', async (req, res) => {
   }
 });
 
-// 8. Balansni boshqarish (Qo'shish / Ayirish)
+// 8. Balansni o'zgartirish (Qo'shish / Ayirish)
 app.post('/api/students/balance', async (req, res) => {
   try {
     const { studentId, amount, action } = req.body;
@@ -235,11 +234,6 @@ app.post('/api/students/certificate', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-
-// Frontend faylni uzatish
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
